@@ -1,2 +1,15 @@
 credentials.json
 key.py
+
+# python
+__pycache__
+.DS_Store
+*.zip
+
+# infolder
+*/*
+
+# package
+easy_install.py
+six.py
+google_auth*
