@@ -4,79 +4,74 @@ import os
 import urllib
 import requests
 import sys
-import key
 from datetime import datetime, timedelta, timezone
 import pytz
 from googleapiclient.discovery import build
 from httplib2 import Http
-from oauth2client import client
-from oauth2client import tools
+from oauth2client import client,tools
 from oauth2client.file import Storage
 from pathlib import Path
 import logging
 import time
+import key
 
-# logging
+# logging setting
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-#googleapi関連の設定
+# google api config
 API_TRY_MAX = 2
 SCOPES = ['https://www.googleapis.com/auth/photoslibrary']
 API_SERVICE_NAME = 'photoslibrary'
 API_VERSION = 'v1'
 TOKEN_FILE = 'credentials.json'
-#保存先dir
-image_dir = '/tmp'
-exts = ['.jpg', '.png', '.mp4']
-#対象のAlbum名を指定
-album_name = key.ALBUM_NAME
 
-
-#前日の00:00:00,当日00:00:00のtimestampを取得
-today = datetime.now(pytz.timezone('UTC'))
-yesterday = today - timedelta(days=1)
-yesterday_dt = datetime.strptime((yesterday.strftime("%Y/%m/%d 00:00:00 +0000")), '%Y/%m/%d %H:%M:%S %z')
-today_dt = datetime.strptime((today.strftime("%Y/%m/%d 00:00:00 +0000")), '%Y/%m/%d %H:%M:%S %z')
-
-SEARCHRANGE_START = yesterday_dt
-SEARCHRANGE_END = today_dt
+# twitter api config
 TL = "https://api.twitter.com/1.1/statuses/user_timeline.json"
-
 CK = key.CONSUMER_KEY
 CS = key.CONSUMER_SECRET
 AT = key.ACCESS_TOKEN
 AS = key.ACCESS_TOKEN_SECRET
 
-# OAuth認証 セッションを開始
+# store file config
+image_dir = '/tmp'
+exts = ['.jpg', '.png', '.mp4', 'gif']
+
+# set using album name
+album_name = key.ALBUM_NAME
+
+# set yesterday and today timestamp
+today = datetime.now(pytz.timezone('UTC'))
+yesterday = today - timedelta(days=1)
+yesterday_dt = datetime.strptime((yesterday.strftime("%Y/%m/%d 00:00:00 +0000")), '%Y/%m/%d %H:%M:%S %z')
+today_dt = datetime.strptime((today.strftime("%Y/%m/%d 00:00:00 +0000")), '%Y/%m/%d %H:%M:%S %z')
+SEARCHRANGE_START = yesterday_dt
+SEARCHRANGE_END = today_dt
+
+# script for Twitter
+# oauth
 twitter = OAuth1Session(CK, CS, AT, AS) 
 
-params = {
-    "screen_name":key.USERID , 
-    "count":200,                
-    "include_entities":True,    
-    "exclude_replies":False,    
-    "include_rts":False         
-} 
-
-#画像保存フォルダがなければ作成(Lambdaではtmpを使うため不使用)
-def create_image_dir(new_dir_path):
-    if not os.path.isdir(new_dir_path):
-        os.makedirs(new_dir_path)
-        logger.debug('makedir {}'.format(new_dir_path))
-
-#以下Twitter関連
+# get TL of target userid (200 Tweet)
 def getTL():
-    global req,timeline,content
+    global req,timeline
+    params = {
+        "screen_name":key.USERID , 
+        "count":200,                
+        "include_entities":True,    
+        "exclude_replies":False,
+        "include_rts":False         
+    }
     req = twitter.get(TL,params=params)
     if req.status_code == 200:
         timeline = json.loads(req.text)
-        print("GetTL OK")
+        logger.info("GetTL OK")
     else:
-        print("Failed: %d" % req.status_code)
+        logger.error("Failed: %d" % req.status_code)
     return(timeline)
 
+# extract only yesterday(UTC) TL
 def yesterday_tl():
     period_tl = []
     for n in range(0, len(timeline)):
@@ -84,34 +79,33 @@ def yesterday_tl():
             period_tl.append(n)
     return period_tl
 
+# download media (Movieが怪しいというかアップできてないがapiの仕様っぽい。やり方ありそうだけど放置)
 def saveImg(period_tl):
     for n in period_tl:
-        print(n)
         if 'extended_entities' in timeline[n]:
             content = timeline[n]["extended_entities"]["media"]
             for m in range(0, len(content)):
                 if content[m]['type'] == "photo":
                     image_url = content[m]["media_url"] + ":orig"
                     filename = image_dir + "/" + content[m]["id_str"] + ".jpg"
-                    print(filename)
+                    logger.info('download filename is {}'.format(filename))
                     try:
                         urllib.request.urlretrieve(image_url, filename)
-                        print("Image is saved successfully")
+                        logger.info("Image is saved successfully")
                     except:
-                        print("error")
+                        logger.error("Image save error")
                 elif content[m]['type'] == "video":
                     video_url = content[m]["media_url"] + ":orig"
-                    filename = image_dir + "/" + content[m]["id_str"] + ".mp4"
+                    filename = image_dir + "/" + content[m]["id_str"] + ".gif"
                     try:
                         urllib.request.urlretrieve(video_url, filename)
-                        print("Movie is saved successfully")
+                        logger.info("Movie is saved successfully")
                     except:
-                        print("error")
+                        logger.error("Movie save error")
         time.sleep(0.5)
 
-
-####以下google photos api 関連
-
+# script for Google photo
+# set oauth
 def get_authenticated_service():
     store = Storage(TOKEN_FILE)
     creds = store.get()
@@ -120,6 +114,7 @@ def get_authenticated_service():
         creds = tools.run_flow(flow, store)
     return build(API_SERVICE_NAME, API_VERSION, http=creds.authorize(Http()))
 
+# execute service api
 def execute_service_api(service_api, service_name):
     for i in range(API_TRY_MAX):
         try:
@@ -133,6 +128,7 @@ def execute_service_api(service_api, service_name):
         logger.error('{} retry out'.format(service_name))
         sys.exit(1)
 
+# get album id list
 def get_album_id_list(service):
     nextPageToken = ''
     album_id_list = {}
@@ -153,6 +149,7 @@ def get_album_id_list(service):
         nextPageToken = album_list['nextPageToken']
     return album_id_list
 
+# create new album
 def create_new_album(album_name):
     logger.debug('create album: {}'.format(album_name))
     new_album = {'album': {'title': album_name}}
@@ -160,6 +157,7 @@ def create_new_album(album_name):
     logger.debug('id: {}, title: {}'.format(response['id'], response['title']))
     return response['id']
 
+# upload image def
 def upload_image(service, image_file, album_id):
     for i in range(API_TRY_MAX):
         try:
@@ -172,7 +170,6 @@ def upload_image(service, image_file, album_id):
                     'X-Goog-Upload-Protocol': "raw",
                 }
                 response = requests.post(url, data=image_data, headers=headers)
-            # アップロードの応答で upload token が返る
             upload_token = response.content.decode('utf-8')
             break
         except Exception as e:
@@ -181,7 +178,6 @@ def upload_image(service, image_file, album_id):
                 time.sleep(3)
     else:
         logger.error('upload retry out')
-        # エラーでリトライアウトした場合は終了
         sys.exit(1)
 
     new_item = {'albumId': album_id,
@@ -193,21 +189,7 @@ def upload_image(service, image_file, album_id):
     logger.debug('batchCreate status: {}'.format(status))
     return status
 
-
-#if __name__ == "__main__":
-def lambda_handler(event, context):
-    #create_image_dir(image_dir)
-    timeline = getTL()
-    period_tl = yesterday_tl()
-    saveImg(period_tl)
-    service = get_authenticated_service()
-    album_id_list = get_album_id_list(service)
-    # 対象のアルバム存在有無
-    if album_id_list[album_name] == '':
-        create_new_album(album_name)
-        album_id_list = get_album_id_list(service)
-    album_id = album_id_list[album_name]
-
+def execute_upload_image():
     path = Path(image_dir)
     if path.is_dir():
         images = sorted([img for img in path.glob('*') if img.suffix in exts])
@@ -221,3 +203,32 @@ def lambda_handler(event, context):
                     status = upload_image(service, image_file, album_id)
                 else:
                     logger.debug('{:3d} {} exists'.format(album_media_count, image_file.name))
+
+def lambda_handler(event, context):
+    # Twitter 
+    timeline = getTL()
+    period_tl = yesterday_tl()
+    saveImg(period_tl)
+    # Google photo
+    service = get_authenticated_service()
+    album_id_list = get_album_id_list(service)
+    if album_id_list[album_name] == '':
+        create_new_album(album_name)
+        album_id_list = get_album_id_list(service)
+    album_id = album_id_list[album_name]
+    execute_upload_image()
+ 
+if __name__ == "__main__":
+    image_dir = './tmp'
+    # Twitter 
+    timeline = getTL()
+    period_tl = yesterday_tl()
+    saveImg(period_tl)
+    # Google photo
+    service = get_authenticated_service()
+    album_id_list = get_album_id_list(service)
+    if album_id_list[album_name] == '':
+        create_new_album(album_name)
+        album_id_list = get_album_id_list(service)
+    album_id = album_id_list[album_name]
+    execute_upload_image()
