@@ -1,0 +1,20 @@
+credentials.json
+key.py
+twitkey.py
+mio_func.py
+
+# python
+__pycache__
+.DS_Store
+
+# trash
+*.zip
+*.tar.gz
+
+# infolder
+*/*
+
+# package
+easy_install.py
+six.py
+google_auth*
